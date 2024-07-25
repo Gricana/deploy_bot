@@ -25,25 +25,25 @@ Deploy Bot is a Python-based automation tool designed specifically for deploying
    ```
 2. **Navigate to the Project Directory**
 
-```sh
-cd deploy_bot
-```
+   ```sh
+   cd deploy_bot
+   ```
 3. **Install Dependencies**
 
-```sh
-pip install -r requirements.txt
-```
+   ```sh
+   pip install -r requirements.txt
+   ```
 4. ****   
 ### Usage
 - To start the bot and deploy your Django application, set:
 
-```sh
-export TG_BOT_TOKEN= .... 
-```
+   ```sh
+   export TG_BOT_TOKEN= .... 
+   ```
 - then run
-```sh
-python main.py
-```
+   ```sh
+   python main.py
+   ```
 ### Detailed Functionalities
 - **API Handling**: The api.py script includes functions for making necessary API calls to external services, crucial for the deployment process of Django projects.
 
