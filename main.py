@@ -3,19 +3,29 @@ import asyncio
 import re
 import os
 from aiogram import Bot, Dispatcher, types
-from aiogram.contrib.fsm_storage.memory import MemoryStorage
+from aiogram.contrib.fsm_storage.redis import RedisStorage2
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
 from api import *
 
 
-logging.basicConfig(level=logging.INFO)
+# Настройка логирования
+logging.basicConfig(level=logging.INFO,
+                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+                    handlers=[logging.FileHandler("bot.log"),
+                              logging.StreamHandler()])
 
+# Загрузка сэмпла диалога
+with open('messages.json', 'r') as f:
+    messages = json.load(f)
 
+# Создание экземпляра бота
 bot = Bot(token=os.environ.get('TG_BOT_TOKEN', 'Токен не указан'))
-dp = Dispatcher(bot, storage=MemoryStorage())
+storage = Redis(host='localhost', port=6379, db=5)
+dp = Dispatcher(bot, storage=storage)
 
 
+# Определение состояний бота
 class BotState(StatesGroup):
     new_project = State()
     project_name = State()
@@ -28,39 +38,39 @@ class BotState(StatesGroup):
     delete = State()
 
 
+# Обработчик команды /start
 @dp.message_handler(commands=('start', ), state='*')
 async def start(message: types.Message):
     username = message.from_user.username
-    await message.answer(f'Здравствуйте, {username}!\n\n'
-                        f'🛠 Я - бот по автодеплою веб-проектов на Python и готов помочь '
-                        f'Вам с быстрым и лёгким развёртыванием ваших проектов. '
-                        f'Благодарим Вас за использование наших услуг!\n\n'
-                        f'Для начала развёртывания проекта выполните команду /new')
+    await message.answer(messages["start"].format(username=username))
 
 
+# Обработчик команды /new
 @dp.message_handler(commands=('new', ), state='*')
 async def new_project(message: types.Message):
-    await message.answer("Укажите название проекта (=имя поддомена сайта)")
+    await message.answer(messages["new_project"])
     await BotState.project_name.set()
 
 
+# Обработчик ввода названия проекта
 @dp.message_handler(state=BotState.project_name)
 async def process_project_name(message: types.Message, state: FSMContext):
     project_name = message.text.strip()
     pattern = r'^[a-zA-Z0-9-]{1,63}$'
     if not re.match(pattern, project_name):
-        await message.answer('Имя проекта невалидно')
+        await message.answer(messages["invalid_project_name"])
         return
     await state.update_data(name=project_name)
-    await message.answer("Укажите краткое описание проекта (до 100 символов)")
+    await message.answer(messages["description"])
     await BotState.description.set()
 
 
+# Обработчик ввода описания проекта
 @dp.message_handler(state=BotState.description)
 async def process_description(message: types.Message, state: FSMContext):
     description = message.text.strip()
     if len(description) < 5:
-        await message.answer('Слишком краткое описание')
+        await message.answer(messages["short_description"])
         return
     await state.update_data(username=message.from_user.username)
     await state.update_data(id=message.from_user.id)
@@ -70,33 +80,34 @@ async def process_description(message: types.Message, state: FSMContext):
     response = await create_project(data)
     await message.answer(response)
 
-    await message.answer("Укажите URL git-репозитория в формате `https://github.com/<username>/repository.git`",
-                         disable_web_page_preview=True, parse_mode='Markdown')
+    await message.answer(messages["repository"],
+                         disable_web_page_preview=True,
+                         parse_mode='Markdown')
 
     await BotState.repository.set()
 
 
+# Обработчик ввода URL git-репозитория
 @dp.message_handler(state=BotState.repository)
 async def process_repository_url(message: types.Message, state: FSMContext):
     git_url = message.text.strip()
 
     pattern = r'https:\/\/(?:[^\s@\/]+@)?github\.com\/.+\/.+(\.git)?'
-    print(re.match(pattern, git_url))
     if re.match(pattern, git_url) is None:
-        await message.answer("Ошибка в формате ввода URL git-репозитория")
+        await message.answer(messages["invalid_git_url"])
         return
     await state.update_data(repo_url=git_url)
-    await message.answer('Выполните команду /config для отправки конфигурационного файла')
+    await message.answer(messages["config"])
 
 
+# Обработчик команды /config
 @dp.message_handler(commands=('config', ), state='*')
 async def config(message: types.Message, state: FSMContext):
-    await message.answer("Отправьте конфигурационный файл в формате <b>TXT / JSON</b>\n\n"
-                         "❗️Файл должен содержать ПОЛНЫЙ перечень переменных, необходимых для запуска Вашего проекта",
-                         parse_mode='html')
+    await message.answer(messages["config_prompt"], parse_mode='html')
     await BotState.config.set()
 
 
+# Обработчик загрузки конфигурационного файла
 @dp.message_handler(content_types=('document', ), state=BotState.config)
 async def process_config(message: types.Message, state: FSMContext):
     if message.document.mime_type in ('text/plain', 'application/json'):
@@ -106,14 +117,14 @@ async def process_config(message: types.Message, state: FSMContext):
         file_name, file_ext = os.path.splitext(file_info.file_path)
         file_ext = file_ext.lstrip('.')
         await state.update_data(config=file_content, ext=file_ext)
-        await message.answer('✅ Файл успешно получен')
-        await message.answer('Теперь можете запустить проект /run')
+        await message.answer(messages["file_received"])
+        await message.answer(messages["run_prompt"])
         await BotState.start.set()
     else:
-        await message.answer('Неверный формат файла! Пожалуйста, отправьте файл с расширением <b>TXT / JSON</b>',
-                             parse_mode='html')
+        await message.answer(messages["invalid_file_format"], parse_mode='html')
 
 
+# Обработчик команды /run
 @dp.message_handler(commands=('run', ), state='*')
 async def run(message: types.Message, state: FSMContext):
     data = await state.get_data()
@@ -121,6 +132,7 @@ async def run(message: types.Message, state: FSMContext):
     await message.answer(response)
 
 
+# Обработчик команды /restart
 @dp.message_handler(commands=('restart', ), state='*')
 async def restart(message: types.Message, state: FSMContext):
     await BotState.restart.set()
@@ -129,6 +141,7 @@ async def restart(message: types.Message, state: FSMContext):
     await message.answer(response)
 
 
+# Обработчик команды /stop
 @dp.message_handler(commands=('stop', ), state='*')
 async def stop(message: types.Message, state: FSMContext):
     await BotState.stop.set()
@@ -136,14 +149,6 @@ async def stop(message: types.Message, state: FSMContext):
     response = await stop_project(data)
     await message.answer(response)
 
-
-@dp.message_handler(commands=('stop', ), state='*')
-async def stop(message: types.Message, state: FSMContext):
-    await BotState.stop.set()
-    data = await state.get_data()
-    response = await get_project(message.from_user.id)
-    await message.answer(response)
-
-
+# Запуск бота
 if __name__ == '__main__':
     asyncio.run(dp.start_polling())
